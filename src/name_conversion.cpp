@@ -202,6 +202,10 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix, 
             if (starts_with(name, language_prefix)) {
                 name = "llm.model." + name.substr(language_prefix.size());
             }
+            // llama.cpp calls the LM head "output"; the name map above cannot match it safely.
+            if (name == "llm.output.weight") {
+                name = "llm.lm_head.weight";
+            }
         }
     } else {
         name = convert_open_clip_to_hf_clip_name(name);

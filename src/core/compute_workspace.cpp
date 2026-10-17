@@ -69,6 +69,7 @@ namespace sd {
 
     bool ComputeWorkspace::allocate(ggml_cgraph* graph, const AssignNodes& assign_nodes) {
         GGML_ASSERT(!active_);
+        ++epoch_;
         const size_t capacity = static_cast<size_t>(graph->n_nodes + graph->n_leafs) + 8;
         if (scheduler_ == nullptr || capacity > scheduler_capacity_) {
             release();
@@ -263,6 +264,7 @@ namespace sd {
         if (active_) {
             return false;
         }
+        ++epoch_;
         measurement_key_.clear();
         measured_buffers_.clear();
         ggml_backend_sched_free(scheduler_);

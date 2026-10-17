@@ -21,6 +21,7 @@ namespace sd {
         bool active_                    = false;
         std::vector<uint8_t> measurement_key_;
         std::vector<BackendBufferSize> measured_buffers_;
+        uint64_t epoch_                 = 0;
 
         ggml_backend_sched_t make_scheduler(size_t graph_size);
 
@@ -52,6 +53,8 @@ namespace sd {
         ggml_backend_sched_t scheduler() const { return scheduler_; }
         ggml_backend_t cpu_backend() const { return cpu_backend_; }
         size_t bytes(ggml_backend_t backend) const;
+        // Changes whenever graph tensors may have moved: every allocation and release.
+        uint64_t epoch() const { return epoch_; }
     };
 }
 

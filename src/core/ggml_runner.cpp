@@ -721,7 +721,9 @@ std::optional<sd::Tensor<float>> GGMLRunner::compute_reusable(uint64_t key, get_
     keep_graph_ = graph_reuse_enabled_;
     auto output = compute(get_graph, n_threads, false);
     keep_graph_ = false;
-    if (output.has_value() && graph_reuse_enabled_ && last_graph_monolithic_ && compute_ctx != nullptr) {
+    // Scheduler graphs (several backends) are split at allocation; they are rebuilt every time.
+    if (output.has_value() && graph_reuse_enabled_ && last_graph_monolithic_ && workspace_.scheduler() == nullptr &&
+        compute_ctx != nullptr) {
         reuse.valid           = true;
         reuse.key             = key;
         reuse.graph           = last_graph_;
@@ -838,6 +840,11 @@ bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads, const std::f
     }
     if (workspace_.cpu_backend() != nullptr) {
         sd_backend_cpu_set_n_threads(workspace_.cpu_backend(), n_threads);
+    }
+    for (ggml_backend_t backend : extra_runtime_backends) {
+        if (sd_backend_is_cpu(backend)) {
+            sd_backend_cpu_set_n_threads(backend, n_threads);
+        }
     }
     auto scheduler = workspace_.scheduler();
     GGML_ASSERT(scheduler != nullptr);

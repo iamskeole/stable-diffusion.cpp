@@ -3073,7 +3073,15 @@ namespace LLM {
                       const std::function<bool(int32_t, const sd::Tensor<float>&)>& on_token = nullptr) {
             tokens.clear();
             release_vision_buffers();
-            bool ok = max_new_tokens > 0 && init_kv_cache(input_ids.numel() + max_new_tokens);
+            // The prefill expands each image placeholder into its vision grid, so
+            // size the KV cache for the expanded sequence, not the raw token count.
+            int64_t n_ctx = input_ids.numel();
+            for (const auto& image_embed : image_embeds) {
+                if (image_embed.second.shape().size() > 1) {
+                    n_ctx += image_embed.second.shape()[1] - 1;
+                }
+            }
+            bool ok = max_new_tokens > 0 && init_kv_cache(n_ctx + max_new_tokens);
             if (ok) {
                 auto logits = compute_logits_cached(n_threads, input_ids, image_embeds, deepstack_image_embeds, image_grids);
                 while (true) {

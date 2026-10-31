@@ -169,10 +169,18 @@ namespace sd::pipeline {
             LOG_ERROR("failed to tokenize the prompt");
             return nullptr;
         }
-        const int64_t n_ctx = static_cast<int64_t>(ids.size()) + params->max_tokens;
+        // The prefill expands each image placeholder into its full vision grid,
+        // so the KV cache must be sized for the expanded sequence, not the raw
+        // token count (a small max_tokens otherwise overflows the capacity).
+        int64_t grid_expansion = 0;
+        for (const auto& size : sizes) {
+            grid_expansion += static_cast<int64_t>((size.first / factor) * (size.second / factor)) - 1;
+        }
+        const int64_t n_ctx = static_cast<int64_t>(ids.size()) + grid_expansion + params->max_tokens;
         if (n_ctx > TEXT_GEN_MAX_CONTEXT) {
-            LOG_ERROR("prompt (%zu tokens) + max_tokens (%d) exceeds the %" PRId64 "-token text generation limit",
-                      ids.size(), params->max_tokens, TEXT_GEN_MAX_CONTEXT);
+            LOG_ERROR("prompt (%zu tokens, +%" PRId64 " from vision grids) + max_tokens (%d) exceeds the %" PRId64
+                      "-token text generation limit",
+                      ids.size(), grid_expansion, params->max_tokens, TEXT_GEN_MAX_CONTEXT);
             return nullptr;
         }
         res.prompt_tokens = static_cast<int>(ids.size());

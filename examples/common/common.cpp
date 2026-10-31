@@ -438,6 +438,16 @@ ArgOptions SDContextParams::get_options() {
          0,
          &llm_vision_path},
         {"",
+         "--pup-llm",
+         "path to a second Qwen3-VL LLM used as the prompt upsampler for text generation",
+         0,
+         &pup_llm_path},
+        {"",
+         "--pup_llm_vision",
+         "path to the pup LLM's vision tower (an mmproj), for image-grounded prompt upsampling",
+         0,
+         &pup_llm_vision_path},
+        {"",
          "--qwen2vl",
          "alias of --llm. Deprecated.",
          0,
@@ -975,6 +985,8 @@ std::string SDContextParams::to_string() const {
         << "  t5xxl_path: \"" << t5xxl_path << "\",\n"
         << "  llm_path: \"" << llm_path << "\",\n"
         << "  llm_vision_path: \"" << llm_vision_path << "\",\n"
+        << "  pup_llm_path: \"" << pup_llm_path << "\",\n"
+        << "  pup_llm_vision_path: \"" << pup_llm_vision_path << "\",\n"
         << "  tokenizer: \"" << tokenizer << "\",\n"
         << "  diffusion_model_path: \"" << diffusion_model_path << "\",\n"
         << "  high_noise_diffusion_model_path: \"" << high_noise_diffusion_model_path << "\",\n"
@@ -1046,6 +1058,8 @@ sd_ctx_params_t SDContextParams::to_sd_ctx_params_t() {
     sd_ctx_params.t5xxl_path                      = t5xxl_path.c_str();
     sd_ctx_params.llm_path                        = llm_path.c_str();
     sd_ctx_params.llm_vision_path                 = llm_vision_path.c_str();
+    sd_ctx_params.pup_llm_path                    = pup_llm_path.c_str();
+    sd_ctx_params.pup_llm_vision_path             = pup_llm_vision_path.c_str();
     sd_ctx_params.tokenizer                       = tokenizer.c_str();
     sd_ctx_params.diffusion_model_path            = diffusion_model_path.c_str();
     sd_ctx_params.high_noise_diffusion_model_path = high_noise_diffusion_model_path.c_str();

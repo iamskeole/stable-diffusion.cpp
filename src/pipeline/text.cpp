@@ -24,17 +24,28 @@ namespace sd::pipeline {
             return std::chrono::duration<float>(text_clock::now() - t0).count();
         }
 
-        LLMEmbedder* text_generation_embedder(StableDiffusionGGML* sd) {
+        struct TextGenLLM {
+            LLM::LLMRunner* llm       = nullptr;
+            Tokenizer* tokenizer      = nullptr;
+        };
+
+        TextGenLLM text_generation_llm(StableDiffusionGGML* sd) {
+            // A dedicated prompt upsampler (--pup-llm) takes precedence; otherwise the Qwen3-VL conditioner.
+            if (auto* pup = sd->pup_text_runner()) {
+                if (pup->config.arch == LLM::LLMArch::QWEN3_VL && pup->supports_kv_cache()) {
+                    return {pup, sd->pup_text_tokenizer()};
+                }
+            }
             auto embedder = std::dynamic_pointer_cast<LLMEmbedder>(sd->cond_stage_model);
             if (embedder == nullptr || embedder->llm == nullptr || embedder->tokenizer == nullptr) {
-                return nullptr;
+                return {};
             }
+            auto& llm = *embedder->llm;
             // The chat template and the image layout below are Qwen3-VL's; other LLMs are untested.
-            const auto& llm = *embedder->llm;
             if (llm.config.arch != LLM::LLMArch::QWEN3_VL || !llm.supports_kv_cache()) {
-                return nullptr;
+                return {};
             }
-            return embedder.get();
+            return {&llm, embedder->tokenizer.get()};
         }
 
         // Size the vision tower sees: a multiple of the merged patch, scaled down to max_pixels if set.
@@ -77,7 +88,7 @@ namespace sd::pipeline {
     }
 
     bool supports_text_generation(StableDiffusionGGML* sd) {
-        return sd != nullptr && text_generation_embedder(sd) != nullptr;
+        return sd != nullptr && text_generation_llm(sd).llm != nullptr;
     }
 
     char* generate_text(StableDiffusionGGML* sd,
@@ -89,8 +100,8 @@ namespace sd::pipeline {
         if (result != nullptr) {
             *result = res;
         }
-        LLMEmbedder* embedder = text_generation_embedder(sd);
-        if (embedder == nullptr) {
+        TextGenLLM tglm = text_generation_llm(sd);
+        if (tglm.llm == nullptr || tglm.tokenizer == nullptr) {
             LOG_ERROR("text generation needs a Qwen3-VL text encoder");
             return nullptr;
         }
@@ -99,8 +110,8 @@ namespace sd::pipeline {
             LOG_ERROR("invalid text generation parameters");
             return nullptr;
         }
-        LLM::LLMRunner& llm  = *embedder->llm;
-        Tokenizer& tokenizer = *embedder->tokenizer;
+        LLM::LLMRunner& llm = *tglm.llm;
+        Tokenizer& tokenizer = *tglm.tokenizer;
         if (params->images_count > 0 && !llm.enable_vision) {
             LOG_ERROR("images need the Qwen3-VL vision weights (--llm_vision or a combined encoder)");
             return nullptr;

@@ -1198,17 +1198,15 @@ bool StableDiffusionGGML::build_core_runners() {
     if (ok && file_exists(SAFE_STR(config_->params.pup_llm_path))) {
         // A second LLM dedicated to prompt upsampling: text generation runs on it instead of the conditioner's
         // one, so a small DiT-conditioned encoder (which may lack an LM head) can be paired with a bigger one.
-        // The vision tower is loaded but not (yet) wired into the graph: the gguf mmproj naming for the Qwen3-VL
-        // vision tower is only converted for a few model versions upstream, and the style detection false-positives
-        // on the LLM's own self-attention names. The upsampler therefore runs text-only for now (the t2i PUP path;
-        // image-conditioned i2i PUP awaits the engine-side vision fix).
+        // When a vision file is given, its Qwen-official mmproj names are converted to the Qwen3-VL vision
+        // layout, and the upsampler can image-condition its captions (the BFL i2i PUP workflow).
         const bool pup_vision_file = file_exists(SAFE_STR(config_->params.pup_llm_vision_path));
         try {
             pup_llm_ = std::make_shared<LLM::LLMRunner>(LLM::LLMArch::QWEN3_VL,
                                                         backend_for(SDBackendModule::TE),
                                                         model_manager->loader().get_tensor_storage_map(),
                                                         "text_encoders.pup",
-                                                        false,
+                                                        pup_vision_file,
                                                         model_manager);
             pup_tokenizer_ = std::make_shared<Qwen2Tokenizer>();
             std::map<std::string, ggml_tensor*> pup_tensors;
@@ -1221,8 +1219,8 @@ bool StableDiffusionGGML::build_core_runners() {
                 LOG_ERROR("failed to register the prompt upsampler LLM");
                 return false;
             }
-            LOG_INFO("prompt upsampler registered (text-only%s): text generation uses '%s'",
-                     pup_vision_file ? "; its vision tower is loaded but not wired yet" : "",
+            LOG_INFO("prompt upsampler registered (%s): text generation uses '%s'",
+                     pup_vision_file ? "with vision" : "text-only",
                      config_->params.pup_llm_path);
         } catch (const std::exception& e) {
             LOG_ERROR("prompt upsampler LLM '%s' failed to initialize: %s", config_->params.pup_llm_path, e.what());

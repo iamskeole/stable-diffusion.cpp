@@ -1760,12 +1760,15 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
         }
     }
 
-    if (version == VERSION_FIBO2 || version == VERSION_QWEN_IMAGE_2_1 || sd_version_is_boogu_image(version) || sd_version_is_krea2(version) || sd_version_is_mage_flow(version) || sd_version_is_minimax_h3(version)) {
+    if (version == VERSION_FIBO2 || version == VERSION_QWEN_IMAGE_2_1 || sd_version_is_boogu_image(version) || sd_version_is_krea2(version) || sd_version_is_mage_flow(version) || sd_version_is_minimax_h3(version) || sd_version_is_flux3(version)) {
         const std::string hf_vision_prefix = "text_encoders.llm.model.visual.";
         if (starts_with(name, hf_vision_prefix)) {
             name = "text_encoders.llm.visual." + name.substr(hf_vision_prefix.size());
         }
-        if (starts_with(name, "text_encoders.llm.visual.")) {
+        // Separate mmproj gguf files load directly under "visual." and keep the Qwen-official v./mm. names;
+        // the map in convert_qwen3_vl_vision_name is written for exactly those names, and a language-model
+        // tensor never starts with "visual.", so this is unambiguous.
+        if (starts_with(name, "text_encoders.llm.visual.") || starts_with(name, "text_encoders.pup.visual.")) {
             name = convert_qwen3_vl_vision_name(std::move(name));
         }
     }

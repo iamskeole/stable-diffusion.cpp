@@ -287,6 +287,10 @@ protected:
 
     size_t retained_runtime_buffer_bytes(ggml_backend_t backend = nullptr) const;
 
+    // Buffers a runner owns across graphs besides its caches (e.g. an LLM KV cache), so the
+    // residency manager can account for them.
+    virtual size_t persistent_buffer_bytes(ggml_backend_t backend) const { return 0; }
+
     void sync_runtime_residency();
 
     std::optional<sd::Tensor<float>> read_graph_tensor(ggml_tensor* tensor, const char* label);
@@ -361,6 +365,16 @@ public:
                                              bool auto_runner_end                      = true,
                                              bool no_return                            = false,
                                              const std::function<bool()>& read_outputs = {});
+
+    // Like compute(get_graph, n_threads, false) for graphs that keep their structure between calls and
+    // only change the data of their inputs (e.g. LLM decode steps): when key, allocation and weights are
+    // the same as for the previous call, the graph is not built again, only its inputs are copied. The
+    // caller must keep the input data at the same addresses, as bound by the get_graph that built it.
+    std::optional<sd::Tensor<float>> compute_reusable(uint64_t key, get_graph_cb_t get_graph, int n_threads);
+
+    void set_graph_reuse_enabled(bool enabled) {
+        graph_reuse_enabled_ = enabled;
+    }
 
     ggml_status last_compute_status() const { return last_compute_status_; }
 

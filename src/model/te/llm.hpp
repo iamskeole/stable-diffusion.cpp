@@ -2613,9 +2613,10 @@ namespace LLM {
             model.get_param_tensors(tensors, "llm");
             size_t bytes = 0;
             for (const auto& [name, tensor] : tensors) {
-                if (name.compare(0, 11, "llm.visual.") != 0) {
-                    bytes += ggml_nbytes(tensor);
+                if (name.compare(0, 11, "llm.visual.") == 0 || name.compare(0, 12, "pup.visual.") == 0) {
+                    continue;
                 }
+                bytes += ggml_nbytes(tensor);
             }
             return bytes;
         }

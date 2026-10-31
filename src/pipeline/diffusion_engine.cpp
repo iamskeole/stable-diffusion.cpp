@@ -41,6 +41,7 @@
 #include "model/diffusion/animatediff.hpp"
 #include "model/diffusion/control.hpp"
 #include "model/diffusion/model.hpp"
+#include "model/te/llm.hpp"
 #include "model/vae/audio_vae.hpp"
 #include "model/vae/ltx_vae.hpp"
 #include "model/vae/vae.hpp"
@@ -49,6 +50,7 @@
 #include "runtime/guidance.h"
 #include "runtime/preview_interval.h"
 #include "runtime/sample-cache.h"
+#include "tokenizers/qwen2_tokenizer.h"
 
 #include "name_conversion.h"
 #include "runtime/latent-preview.h"
@@ -350,15 +352,23 @@ size_t StableDiffusionGGML::max_graph_vram_bytes_for_module(SDBackendModule modu
 }
 
 LLM::LLMRunner* StableDiffusionGGML::prepare_text_generation(int64_t n_ctx) {
-    auto embedder = std::dynamic_pointer_cast<LLMEmbedder>(cond_stage_model);
-    if (embedder == nullptr || embedder->llm == nullptr || !embedder->llm->supports_kv_cache()) {
-        LOG_ERROR("text generation needs a causal LLM text encoder");
-        return nullptr;
+    LLM::LLMRunner* llm_ptr = nullptr;
+    std::string head_prefix = "text_encoders.llm";
+    if (pup_llm_ && pup_llm_->config.arch == LLM::LLMArch::QWEN3_VL && pup_llm_->supports_kv_cache()) {
+        llm_ptr   = pup_llm_.get();
+        head_prefix = "text_encoders.pup";
+    } else {
+        auto embedder = std::dynamic_pointer_cast<LLMEmbedder>(cond_stage_model);
+        if (embedder == nullptr || embedder->llm == nullptr || !embedder->llm->supports_kv_cache()) {
+            LOG_ERROR("text generation needs a causal LLM text encoder");
+            return nullptr;
+        }
+        llm_ptr = embedder->llm.get();
     }
-    LLM::LLMRunner& llm = *embedder->llm;
+    LLM::LLMRunner& llm = *llm_ptr;
     if (!llm.model.has_lm_head()) {
         std::map<std::string, ggml_tensor*> head;
-        if (!llm.init_lm_head(model_manager->loader().get_tensor_storage_map(), "text_encoders.llm", head) ||
+        if (!llm.init_lm_head(model_manager->loader().get_tensor_storage_map(), head_prefix, head) ||
             !model_manager->register_param_tensors(ModelComponent::Conditioner,
                                                    head,
                                                    ModelManager::ResidencyMode::ParamBackend,
@@ -869,6 +879,20 @@ bool StableDiffusionGGML::init_model_loader(ModelLoader& model_loader, ModelConf
         }
     }
 
+    if (strlen(SAFE_STR(sd_ctx_params->pup_llm_path)) > 0) {
+        LOG_INFO("loading pup llm from '%s'", sd_ctx_params->pup_llm_path);
+        if (!load_model("pup_llm", sd_ctx_params->pup_llm_path, "text_encoders.pup.")) {
+            LOG_WARN("loading pup llm from '%s' failed", sd_ctx_params->pup_llm_path);
+        }
+    }
+
+    if (strlen(SAFE_STR(sd_ctx_params->pup_llm_vision_path)) > 0) {
+        LOG_INFO("loading pup llm vision from '%s'", sd_ctx_params->pup_llm_vision_path);
+        if (!load_model("pup_llm_vision", sd_ctx_params->pup_llm_vision_path, "text_encoders.pup.visual.")) {
+            LOG_WARN("loading pup llm vision from '%s' failed", sd_ctx_params->pup_llm_vision_path);
+        }
+    }
+
     if (strlen(SAFE_STR(sd_ctx_params->vae_path)) > 0) {
         LOG_INFO("loading vae from '%s'", sd_ctx_params->vae_path);
         if (!model_loader.init_from_file(sd_ctx_params->vae_path, "vae.")) {
@@ -1207,12 +1231,47 @@ bool StableDiffusionGGML::build_core_runners() {
     if (audio_encoder) {
         audio_encoder->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::AUDIO_ENCODER));
     }
-    return register_runner_params(ModelComponent::Conditioner, cond_stage_model, SDBackendModule::TE) &&
-           register_runner_params(ModelComponent::Diffusion, diffusion_model, SDBackendModule::DIFFUSION) &&
-           register_runner_params(ModelComponent::HighNoiseDiffusion, high_noise_diffusion_model, SDBackendModule::DIFFUSION) &&
-           register_runner_params(ModelComponent::CLIPVision, clip_vision, SDBackendModule::CLIP_VISION) &&
-           register_runner_params(ModelComponent::IPAdapter, ip_adapter, SDBackendModule::DIFFUSION) &&
-           register_runner_params(ModelComponent::AudioEncoder, audio_encoder, SDBackendModule::AUDIO_ENCODER);
+    bool ok = register_runner_params(ModelComponent::Conditioner, cond_stage_model, SDBackendModule::TE) &&
+              register_runner_params(ModelComponent::Diffusion, diffusion_model, SDBackendModule::DIFFUSION) &&
+              register_runner_params(ModelComponent::HighNoiseDiffusion, high_noise_diffusion_model, SDBackendModule::DIFFUSION) &&
+              register_runner_params(ModelComponent::CLIPVision, clip_vision, SDBackendModule::CLIP_VISION) &&
+              register_runner_params(ModelComponent::IPAdapter, ip_adapter, SDBackendModule::DIFFUSION) &&
+              register_runner_params(ModelComponent::AudioEncoder, audio_encoder, SDBackendModule::AUDIO_ENCODER);
+    if (ok && file_exists(SAFE_STR(config_->params.pup_llm_path))) {
+        // A second LLM dedicated to prompt upsampling: text generation runs on it instead of the conditioner's
+        // one, so a small DiT-conditioned encoder (which may lack an LM head) can be paired with a bigger one.
+        // The vision tower is loaded but not (yet) wired into the graph: the gguf mmproj naming for the Qwen3-VL
+        // vision tower is only converted for a few model versions upstream, and the style detection false-positives
+        // on the LLM's own self-attention names. The upsampler therefore runs text-only for now (the t2i PUP path;
+        // image-conditioned i2i PUP awaits the engine-side vision fix).
+        const bool pup_vision_file = file_exists(SAFE_STR(config_->params.pup_llm_vision_path));
+        try {
+            pup_llm_ = std::make_shared<LLM::LLMRunner>(LLM::LLMArch::QWEN3_VL,
+                                                        backend_for(SDBackendModule::TE),
+                                                        model_manager->loader().get_tensor_storage_map(),
+                                                        "text_encoders.pup",
+                                                        false,
+                                                        model_manager);
+            pup_tokenizer_ = std::make_shared<Qwen2Tokenizer>();
+            std::map<std::string, ggml_tensor*> pup_tensors;
+            pup_llm_->get_param_tensors(pup_tensors, "text_encoders.pup");
+            if (!model_manager->register_param_tensors(ModelComponent::Conditioner,
+                                                       pup_tensors,
+                                                       ModelManager::ResidencyMode::ParamBackend,
+                                                       backend_for(SDBackendModule::TE),
+                                                       params_backend_for(SDBackendModule::TE))) {
+                LOG_ERROR("failed to register the prompt upsampler LLM");
+                return false;
+            }
+            LOG_INFO("prompt upsampler registered (text-only%s): text generation uses '%s'",
+                     pup_vision_file ? "; its vision tower is loaded but not wired yet" : "",
+                     config_->params.pup_llm_path);
+        } catch (const std::exception& e) {
+            LOG_ERROR("prompt upsampler LLM '%s' failed to initialize: %s", config_->params.pup_llm_path, e.what());
+            return false;
+        }
+    }
+    return ok;
 }
 
 bool StableDiffusionGGML::build_vae_runners() {

@@ -192,8 +192,8 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix, 
     };
     if (contains(name, "t5xxl")) {
         replace_with_name_map(name, t5_name_map);
-    } else if (contains(name, "llm")) {
-        if (contains(name, "llm.visual")) {
+    } else if (contains(name, "llm") || contains(name, "pup")) {
+        if (contains(name, "llm.visual") || contains(name, "pup.visual")) {
             replace_with_name_map(name, llm_vision_name_map);
         } else {
             replace_with_name_map(name, llm_name_map);
@@ -202,9 +202,12 @@ std::string convert_cond_stage_model_name(std::string name, std::string prefix, 
             if (starts_with(name, language_prefix)) {
                 name = "llm.model." + name.substr(language_prefix.size());
             }
-            // llama.cpp calls the LM head "output"; the name map above cannot match it safely.
-            if (name == "llm.output.weight") {
-                name = "llm.lm_head.weight";
+            // llama.cpp calls the LM head "output"; the name map above cannot match it safely
+            // (attn_output ends in "output.weight" too, but with an underscore, not a dot).
+            const std::string out_suffix = ".output.weight";
+            if (name.size() > out_suffix.size() &&
+                name.compare(name.size() - out_suffix.size(), out_suffix.size(), out_suffix) == 0) {
+                name.replace(name.size() - out_suffix.size(), out_suffix.size(), ".lm_head.weight");
             }
         }
     } else {

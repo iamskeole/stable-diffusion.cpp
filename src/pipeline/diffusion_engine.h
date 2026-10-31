@@ -28,6 +28,7 @@ struct Denoiser;
 namespace LLM {
     struct LLMRunner;
 }
+class Qwen2Tokenizer;
 struct LoraModel;
 struct ConditionerParams;
 class ConditioningCache;
@@ -72,6 +73,10 @@ public:
     float active_flow_shift  = INFINITY;
 
     std::shared_ptr<Conditioner> cond_stage_model;
+
+    // Optional second LLM (a prompt upsampler, --pup-llm): text generation runs on it when present.
+    std::shared_ptr<LLM::LLMRunner> pup_llm_;
+    std::shared_ptr<Qwen2Tokenizer> pup_tokenizer_;
     std::shared_ptr<FrozenCLIPVisionEmbedder> clip_vision;  // for svd or wan2.1 i2v
     std::shared_ptr<DiffusionModelRunner> diffusion_model;
     std::shared_ptr<DiffusionModelRunner> high_noise_diffusion_model;
@@ -149,7 +154,8 @@ public:
                                 &sd_ctx_params_t::pulid_weights_path, &sd_ctx_params_t::tensor_type_rules,
                                 &sd_ctx_params_t::max_vram, &sd_ctx_params_t::backend,
                                 &sd_ctx_params_t::params_backend, &sd_ctx_params_t::split_mode,
-                                &sd_ctx_params_t::rpc_servers, &sd_ctx_params_t::model_args}) {
+                                &sd_ctx_params_t::rpc_servers, &sd_ctx_params_t::model_args,
+                                &sd_ctx_params_t::pup_llm_path, &sd_ctx_params_t::pup_llm_vision_path}) {
                 strings.emplace_back(SAFE_STR(initial.*member));
                 params.*member = strings.back().c_str();
             }
@@ -270,11 +276,14 @@ public:
 
     size_t max_graph_vram_bytes_for_module(SDBackendModule module);
 
-    // Text generation with the conditioner's LLM (prompt enhancer): registers its LM head on first use
-    // and, when the LLM's weights, a KV cache of n_ctx tokens and its compute buffers do not fit in the
-    // text encoder's VRAM budget next to the other resident models, moves those models to RAM until
-    // their next use. Returns nullptr if the conditioner cannot generate text.
+    // Text generation (prompt enhancer): runs on the prompt upsampler LLM when one is configured, otherwise on
+    // the conditioner's LLM. Registers the chosen LLM's LM head on first use and, when its weights, a KV cache
+    // of n_ctx tokens and its compute buffers do not fit in the text encoder's VRAM budget next to the other
+    // resident models, moves those models to RAM until their next use. Returns nullptr if no LLM can generate.
     LLM::LLMRunner* prepare_text_generation(int64_t n_ctx);
+
+    LLM::LLMRunner* pup_text_runner() const { return pup_llm_.get(); }
+    Qwen2Tokenizer* pup_text_tokenizer() const { return pup_tokenizer_.get(); }
 
     std::vector<size_t> layer_split_vram_limits_for_backends(const std::vector<ggml_backend_t>& backends);
 

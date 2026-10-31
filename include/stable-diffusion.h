@@ -253,6 +253,8 @@ typedef struct {
     int conditioning_cache_size;  // Maximum cached conditioning entries per context; 0 disables caching (default: 4)
     const char* flash_attn_mode;  // on/off/auto or module assignments (e.g. "auto,te=off"); NULL/empty honors legacy flags.
     const char* conv_direct_mode;  // on/off/auto or diffusion/vae/controlnet assignments; NULL/empty honors legacy flags.
+    const char* pup_llm_path;         // Optional second Qwen3-VL LLM (a prompt upsampler); text generation runs on it when present
+    const char* pup_llm_vision_path;  // Its vision tower (an mmproj) for image-grounded prompt upsampling
 } sd_ctx_params_t;
 
 typedef struct {

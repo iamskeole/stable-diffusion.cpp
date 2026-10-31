@@ -837,42 +837,26 @@ bool GGMLRunner::fits(const std::vector<DeviceMemoryRequest>& requests,
     return true;
 }
 
-bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads, const std::function<void()>& on_before_compute) {
+bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads) {
     if (sd_backend_is_cpu(runtime_backend)) {
         sd_backend_cpu_set_n_threads(runtime_backend, n_threads);
     }
     if (workspace_.cpu_backend() != nullptr) {
         sd_backend_cpu_set_n_threads(workspace_.cpu_backend(), n_threads);
     }
-    for (ggml_backend_t backend : extra_runtime_backends) {
-        if (sd_backend_is_cpu(backend)) {
-            sd_backend_cpu_set_n_threads(backend, n_threads);
-        }
-    }
     auto scheduler = workspace_.scheduler();
-    GGML_ASSERT(scheduler != nullptr);
-    ggml_backend_sched_set_eval_callback(scheduler, sd_get_backend_eval_callback(), sd_get_backend_eval_callback_data());
-#ifndef SD_USE_UPSTREAM_GGML
-    struct BeforeComputeCallback {
-        ggml_backend_t backend;
-        const std::function<void()>& callback;
-        bool invoked = false;
-    } before_compute{runtime_backend, on_before_compute};
-    ggml_backend_sched_set_compute_callback(
-        scheduler, [](ggml_backend_t backend, void* data) {
-            auto& hook = *static_cast<BeforeComputeCallback*>(data);
-            if (backend == hook.backend && !hook.invoked) {
-                hook.invoked = true;
-                hook.callback();
-            }
-        },
-        &before_compute);
-    const auto status = ggml_backend_sched_graph_compute_async(scheduler, graph);
-    ggml_backend_sched_set_compute_callback(scheduler, nullptr, nullptr);
-#else
-    on_before_compute();
-    const auto status = ggml_backend_sched_graph_compute_async(scheduler, graph);
-#endif
+    ggml_status status;
+    if (scheduler != nullptr) {
+        if (sd_get_backend_eval_callback() != nullptr && !multi_device_eval_callback_warned) {
+            LOG_WARN("%s: eval callback is not supported with the backend scheduler; ignoring", get_desc().c_str());
+            multi_device_eval_callback_warned = true;
+        }
+        status = ggml_backend_sched_graph_compute(scheduler, graph);
+    } else {
+        status = sd_backend_graph_compute_with_eval_callback(runtime_backend, graph,
+                                                             sd_get_backend_eval_callback(),
+                                                             sd_get_backend_eval_callback_data());
+    }
     workspace_.synchronize();
     if (status != GGML_STATUS_SUCCESS) {
         last_compute_status_ = status;

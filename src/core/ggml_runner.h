@@ -163,13 +163,12 @@ private:
                                                      size_t pending_cache_bytes) const;
     bool fits(const std::vector<DeviceMemoryRequest>& requests,
               const std::vector<ggml_tensor*>& params) const;
-    bool execute_segment(ggml_cgraph* graph, int n_threads);
+    bool execute_segment(ggml_cgraph* graph, int n_threads, const std::function<void()>& on_before_compute);
     std::optional<sd::Tensor<float>> execute_graph(ggml_cgraph* graph, int n_threads, bool no_return, const std::function<bool()>& read_outputs);
 
 protected:
     typedef std::function<ggml_cgraph*()> get_graph_cb_t;
     using GraphCutPlan = sd::ggml_graph_cut::Plan;
-    bool multi_device_eval_callback_warned = false;
 
     ggml_backend_t runtime_backend = nullptr;
 
